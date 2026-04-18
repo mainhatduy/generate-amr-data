@@ -2,7 +2,7 @@ import penman
 import os
 import json
 import re
-from typing import Dict, List, Optional, Tuple, Set
+from typing import Any, Dict, List, Optional, Tuple, Set
 
 
 class FindFrame:
@@ -86,15 +86,6 @@ class FindFrame:
         sorted_args = sorted(arguments.keys())
         
         for arg_key in sorted_args:
-            # arg_key is like "ARG0"
-            # args is list of numbers like ["0", "1"]
-            if args is not None:
-                match = re.search(r'ARG(\d+)', arg_key)
-                if match:
-                    num = match.group(1)
-                    if num not in args:
-                        continue
-            
             lines.append(f"  - {arg_key}: {arguments[arg_key]}")
         
         return "\n".join(lines)
@@ -321,3 +312,112 @@ class AMRHint:
         final_hints.extend(selected_hints)
         
         return "\n\n".join(final_hints)
+
+    def get_hints_structured(
+        self,
+        amr_input,
+        *,
+        include_all_arguments: bool = True,
+    ) -> Dict[str, Any]:
+        """Generate structured hints (Python dict) from an AMR string or Graph.
+
+        Output shape:
+            {
+              "root": "want-01" | None,
+              "frames": [
+                {
+                  "frame": "want-01",
+                  "meaning": "want, desire",
+                  "used_args": ["ARG0", "ARG1"],
+                  "used_arguments": {"ARG0": "...", "ARG1": "..."},
+                  "arguments": {"ARG0": "...", ...}  # optional
+                },
+                ...
+              ],
+              "concepts": [
+                {"concept": "...", "type": "..." | None, "relation_pointer": "..." | None},
+                ...
+              ]
+            }
+
+        Notes:
+        - Requires AMR input to already be in Penman format; this module does not infer frames from raw text.
+        - Frames/concepts are de-duplicated.
+        """
+        frames_info, concepts = self.extract_frames_and_concepts(amr_input)
+
+        root: Optional[str] = None
+        try:
+            g = amr_input if isinstance(amr_input, penman.Graph) else penman.decode(amr_input)
+            root_var = g.top
+            if root_var in frames_info:
+                root = frames_info[root_var].get("frame")
+        except Exception:
+            root = None
+
+        frames: List[Dict[str, Any]] = []
+        seen_frames: Set[str] = set()
+
+        for _var, info in frames_info.items():
+            frame_name = info.get("frame")
+            if not frame_name:
+                continue
+
+            frame_data = self.frame_finder.get_frame(frame_name)
+            if not frame_data:
+                continue
+
+            frame_id = frame_data.get("frame", frame_name)
+            if frame_id in seen_frames:
+                continue
+
+            arguments: Dict[str, str] = dict(frame_data.get("arguments", {}) or {})
+            used_nums = sorted(set(info.get("args", []) or []), key=lambda x: int(x) if str(x).isdigit() else 10**9)
+            used_args = [f"ARG{n}" for n in used_nums]
+            used_arguments = {k: arguments[k] for k in used_args if k in arguments}
+
+            frame_obj: Dict[str, Any] = {
+                "frame": frame_id,
+                "meaning": frame_data.get("meaning", ""),
+                "used_args": used_args,
+                "used_arguments": used_arguments,
+            }
+            if include_all_arguments:
+                frame_obj["arguments"] = arguments
+
+            frames.append(frame_obj)
+            seen_frames.add(frame_id)
+
+        concept_out: List[Dict[str, Any]] = []
+        seen_concepts: Set[str] = set()
+        for concept in concepts:
+            if concept in seen_concepts:
+                continue
+            seen_concepts.add(concept)
+
+            group = self.concept_finder.concept_mapping.get(concept)
+            info = self.concept_finder.concepts_data.get(group) if group else None
+            if not info:
+                continue
+
+            concept_obj: Dict[str, Any] = {"concept": concept}
+            concept_obj["type"] = group if group and group != concept else None
+            concept_obj["relation_pointer"] = info.get("relation_pointer")
+            concept_out.append(concept_obj)
+
+        return {
+            "root": root,
+            "frames": frames,
+            "concepts": concept_out,
+        }
+
+    def get_hints_json(
+        self,
+        amr_input,
+        *,
+        include_all_arguments: bool = True,
+        indent: Optional[int] = 4,
+    ) -> str:
+        """Generate structured hints and serialize as JSON string."""
+        obj = self.get_hints_structured(amr_input, include_all_arguments=include_all_arguments)
+        return json.dumps(obj, ensure_ascii=False, indent=indent)
