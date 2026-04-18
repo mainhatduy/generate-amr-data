@@ -10,8 +10,12 @@ class FindFrame:
 
     def __init__(self, frames_path=None):
         if frames_path is None:
-            # Default to propbank_amr_frames.jsonl in the same directory
-            frames_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "propbank_amr_frames.jsonl")
+            # Default to bundled PropBank frames under concepts/
+            frames_path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                "concepts",
+                "propbank_amr_frames.jsonl",
+            )
         self.frames = self.load_frames(frames_path)
         
     def convert_roleset_id(self, roleset_id: str) -> str:
@@ -107,7 +111,11 @@ class FindConcept:
     
     def __init__(self, concepts_path=None):
         if concepts_path is None:
-            concepts_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "concept_groups.json")
+            concepts_path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                "concepts",
+                "concept_groups.json",
+            )
         self.concepts_data, self.concept_mapping = self.load_concepts(concepts_path)
         
     def load_concepts(self, concepts_path: str) -> Tuple[Dict, Dict]:

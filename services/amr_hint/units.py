@@ -238,7 +238,7 @@ def add_smatch_scores_to_jsonl(
         extract_amr_from_predict: Whether to extract AMR from predict field.
     """
     # Import AMRHint for remove_wiki_from_amr
-    from llm_hint.AMRHint import AMRHint
+    from .AMRHint import AMRHint
     
     # Load data
     with open(jsonl_path, 'r', encoding='utf-8') as f:
