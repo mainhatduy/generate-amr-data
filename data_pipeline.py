@@ -19,7 +19,7 @@ DEFAULT_CONFIG_PATH = Path("configs/configs.json")
 DEFAULT_OUTPUT_PATH = Path("data/systhetic_data.jsonl")
 
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 def _model_to_json_line(model: SystheticData) -> str:
     """Serialize a pydantic model to a single JSON line across v1/v2 APIs."""

@@ -25,7 +25,8 @@ leads you to the most accurate AMR.
 When done, emit the final AMR in PENMAN notation inside <amr>...</amr>.
 """
 
-USER_PROMPT = """Sentence: {sentence}"""
+USER_PROMPT = """Sentence: {sentence}
+/think"""
 
 
 def build_prompt(sentence, amr):
