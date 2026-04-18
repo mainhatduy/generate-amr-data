@@ -23,6 +23,6 @@
     "response_for_each_sample": 4
   },
   "env": {
-    "CUDA_VISIBLE_DEVICES": "0"
+    "CUDA_VISIBLE_DEVICES": "1"
   }
 }
