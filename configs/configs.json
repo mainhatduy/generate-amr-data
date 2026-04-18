@@ -1,0 +1,19 @@
+{
+  "vllm_config": {
+    "model": "Qwen/Qwen3.6-35B-A3B-FP8",
+    "tensor_parallel_size": 1,
+    "gpu_memory_utilization": 0.85,
+
+    "max_model_len": 4096,
+    "max_tokens": 1024,
+    "temperature": 1.0,
+    "top_p": 0.95,
+    "top_k": 20,
+    "min_p": 0.0,
+    "presence_penalty": 1.5,
+    "repetition_penalty": 1.0
+  },
+  "env": {
+    "CUDA_VISIBLE_DEVICES": "0"
+  }
+}
