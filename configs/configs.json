@@ -20,7 +20,7 @@
     "amr_field": "amr"
   },
   "generate_systhetic_data": {
-    "response_for_each_sample": 4
+    "response_for_each_sample": 1
   },
   "env": {
     "CUDA_VISIBLE_DEVICES": "0"

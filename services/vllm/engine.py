@@ -17,10 +17,11 @@ DEFAULT_CONFIG = {
     "presence_penalty": 1.5,
     "repetition_penalty": 1.0,
     "max_tokens": 1024,
+    "enable_thinking": False,
 }
 
 class VLLMEngine:
-    def __init__(self, config: dict = None, cuda_device: str = "0"):
+    def __init__(self, config: dict = None, cuda_device: str = "1"):
         """
         Initialize the vLLM Engine.
         """
@@ -37,6 +38,7 @@ class VLLMEngine:
             print(f"Current CUDA device: {torch.cuda.current_device()}")
             print(f"Device name: {torch.cuda.get_device_name()}")
 
+        self.enable_thinking = self.config.get("enable_thinking", False)
         self.sampling_params = SamplingParams(
             temperature=self.config.get("temperature", 1.0),
             top_p=self.config.get("top_p", 0.95),
@@ -62,18 +64,26 @@ class VLLMEngine:
             traceback.print_exc()
             raise e
 
-    def generate(self, prompt: str) -> str:
+    def generate(self, messages: list[dict]) -> str:
         """
-        Generate a response for a single prompt.
+        Generate a response for a single conversation (list of messages).
         """
-        outputs = self.model.generate(prompt, self.sampling_params)
+        outputs = self.model.chat(
+            messages,
+            sampling_params=self.sampling_params,
+            chat_template_kwargs={"enable_thinking": self.enable_thinking},
+        )
         if outputs and len(outputs) > 0:
             return outputs[0].outputs[0].text
         return ""
 
-    def generate_batch(self, prompts: list[str]) -> list[str]:
+    def generate_batch(self, batch_messages: list[list[dict]]) -> list[str]:
         """
-        Generate responses for a batch of prompts.
+        Generate responses for a batch of conversations.
         """
-        outputs = self.model.generate(prompts, self.sampling_params)
+        outputs = self.model.chat(
+            batch_messages,
+            sampling_params=self.sampling_params,
+            chat_template_kwargs={"enable_thinking": self.enable_thinking},
+        )
         return [output.outputs[0].text for output in outputs]

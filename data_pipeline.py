@@ -33,11 +33,14 @@ def load_config(config_path: Path) -> Dict[str, Any]:
         return json.load(file)
 
 
-def build_full_prompt(sentence: str, amr: str) -> str:
-    """Combine system prompt (with hints) and sentence-specific user prompt."""
+def build_full_prompt(sentence: str, amr: str) -> list[dict]:
+    """Build chat messages with system prompt (with hints) and sentence-specific user prompt."""
     system_prompt = build_prompt(sentence=sentence, amr=amr)
     user_prompt = USER_PROMPT.format(sentence=sentence)
-    return f"{system_prompt}\n\n{user_prompt}"
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
 
 
 def generate_systhetic_data(
