@@ -22,6 +22,7 @@ There is no required reasoning format — use whatever thinking process
 leads you to the most accurate AMR.
 
 ## Output
+Respond your thinking process in <think>...</think> tags, and the final AMR in PENMAN notation in <amr>...</amr> tags.
 When done, emit the final AMR in PENMAN notation inside <amr>...</amr>.
 """
 

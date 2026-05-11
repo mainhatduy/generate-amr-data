@@ -1,17 +1,11 @@
 {
-  "vllm_config": {
-    "model": "Qwen/Qwen3.6-27B-FP8",
-    "tensor_parallel_size": 1,
-    "gpu_memory_utilization": 0.85,
-
-    "max_model_len": 8192,
-    "max_tokens": 4096,
-    "temperature": 1.0,
-    "top_p": 0.95,
-    "top_k": 20,
-    "min_p": 0.0,
-    "presence_penalty": 1.5,
-    "repetition_penalty": 1.0
+  "deepseek_config": {
+    "model": "deepseek-v4-flash",
+    "max_tokens": 16384,
+    "thinking": {
+      "type": "disabled"
+    },
+    "reasoning_effort": "medium"
   },
   "data_config": {
     "dataset": "viamr-project/reasoning-frame-hint",
@@ -19,7 +13,8 @@
     "sentence_field": "sentence",
     "amr_field": "amr"
   },
-  "generate_systhetic_data": {
+  "generate_synthetic_data": {
+    "batch_size": 32,
     "response_for_each_sample": 1
   },
   "env": {
