@@ -5,7 +5,7 @@
     "full_finetuning": true
   },
   "dataset": {
-    "train_file": "/home/nhatduy/workspace/generate-amr-data/data/processed_data.jsonl",
+    "train_file": "/teamspace/studios/this_studio/generate-amr-data/data/processed_data.jsonl",
     "test_file": "data/test.jsonl",
     "chat_template": "qwen3-thinking",
     "filter_rl_data": false
@@ -51,6 +51,6 @@
     "max_tokens": 8192
   },
   "environment": {
-    "cuda_visible_devices": "1"
+    "cuda_visible_devices": "0"
   }
 }

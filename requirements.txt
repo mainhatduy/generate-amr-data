@@ -2,3 +2,6 @@ smatchpp
 penman
 datasets
 openai
+matplotlib
+unsloth
+wandb
