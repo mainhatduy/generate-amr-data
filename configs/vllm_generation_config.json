@@ -1,0 +1,31 @@
+{
+  "model_config": {
+    "model": "viamr-project/qwen3-1.7b-amr-20260512-1445",
+    "tensor_parallel_size": 1,
+    "gpu_memory_utilization": 0.85,
+    "max_model_len": 12288,
+    "enable_thinking": false
+  },
+  "sampling_config": {
+    "temperature": 0.7,
+    "top_p": 0.8,
+    "top_k": 20,
+    "min_p": 0.0,
+    "presence_penalty": 0.0,
+    "repetition_penalty": 1.0,
+    "max_tokens": 8192
+  },
+  "data_config": {
+    "dataset": "viamr-project/reasoning-frame-hint",
+    "split": "train",
+    "sentence_field": "sentence",
+    "amr_field": "amr"
+  },
+  "generation_config": {
+    "n_samples_per_input": 3,
+    "batch_size": 16
+  },
+  "env": {
+    "CUDA_VISIBLE_DEVICES": "0"
+  }
+}
