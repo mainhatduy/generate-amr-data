@@ -34,8 +34,8 @@ source .venv/bin/activate
 > [!TIP]
 > If you are using vLLM and need `flash-attn` for accelerated performance, you can build and install it using:
 > ```bash
-> pip uninstall -y ninja && pip install ninja
-> uv pip install flash-attn --no-build-isolation
+> uv pip install ninja packaging
+> MAX_JOBS=32 uv pip install flash-attn --no-build-isolation
 > ```
 
 ---
