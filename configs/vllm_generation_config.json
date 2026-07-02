@@ -3,7 +3,7 @@
     "model": "google/gemma-4-26B-A4B-it",
     "tensor_parallel_size": 1,
     "gpu_memory_utilization": 0.95,
-    "max_model_len": 12288,
+    "max_model_len": 8192,
     "enable_thinking": false
   },
   "sampling_config": {
@@ -13,7 +13,7 @@
     "min_p": 0.0,
     "presence_penalty": 0.0,
     "repetition_penalty": 1.05,
-    "max_tokens": 8192
+    "max_tokens": 4096
   },
   "data_config": {
     "dataset": "viamr-project/reasoning-frame-hint",
@@ -23,7 +23,7 @@
   },
   "generation_config": {
     "n_samples_per_input": 3,
-    "batch_size": 16
+    "batch_size": 32
   },
   "env": {
     "CUDA_VISIBLE_DEVICES": "0"
