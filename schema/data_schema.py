@@ -25,6 +25,7 @@ class ReasoningSample(BaseModel):
 
 class DiverseReasoningResult(BaseModel):
     """Result for one input sentence: top-k diverse reasoning paths."""
+    id: int | None = None
     sentence: str
     gold_amr: str
     selected_samples: List[ReasoningSample]

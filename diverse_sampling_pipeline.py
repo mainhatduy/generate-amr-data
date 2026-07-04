@@ -19,13 +19,16 @@ from __future__ import annotations
 import argparse
 import gc
 import json
+import logging
 import os
 import re
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 import torch
 
 import numpy as np
+from tqdm import tqdm
 from datasets import load_dataset
 from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
@@ -95,6 +98,72 @@ def score_amr_pair(gold: str, pred: str, scorer: Smatchpp) -> Dict[str, float]:
         return result["main"]  # {'F1': ..., 'Precision': ..., 'Recall': ...}
     except Exception as e:
         return {"F1": 0.0, "Precision": 0.0, "Recall": 0.0, "error": str(e)}
+
+
+# -- Parallel scoring helpers ------------------------------------------------
+
+_worker_scorer: Smatchpp | None = None
+
+
+def _init_worker_scorer():
+    """Initializer for ProcessPoolExecutor workers — creates a per-process Smatchpp."""
+    global _worker_scorer
+    # Suppress noisy smatchpp warnings (broken graph, :root relation, etc.)
+    logging.getLogger("__main__").setLevel(logging.ERROR)
+    logging.getLogger("smatchpp").setLevel(logging.ERROR)
+    logging.getLogger("penman").setLevel(logging.ERROR)
+    _worker_scorer = Smatchpp()
+
+
+def _score_record_worker(
+    args: Tuple[int, str, str, List[str], float],
+) -> Tuple[int, str, str, int, List[Dict[str, Any]]]:
+    """
+    Score all responses for a single record in a worker process.
+
+    Args:
+        args: (idx, sentence, gold_amr, responses, f1_threshold)
+
+    Returns:
+        (idx, sentence, gold_amr, total_responses, scored_items)
+        where scored_items is a list of dicts with keys:
+            thinking, pred_amr, f1, precision, recall
+        Only items with f1 >= f1_threshold are included.
+    """
+    global _worker_scorer
+    idx, sentence, gold_amr, responses, f1_threshold = args
+
+    scored_items: List[Dict[str, Any]] = []
+    if responses is not None:
+        for resp in responses:
+            if not resp or not resp.strip():
+                continue
+            thinking = extract_thinking(resp)
+            pred_amr = extract_amr(resp)
+            if not pred_amr:
+                continue
+
+            try:
+                result = _worker_scorer.score_pair(gold_amr, pred_amr)  # type: ignore[union-attr]
+                scores = result["main"]
+            except Exception:
+                continue
+
+            f1 = float(scores.get("F1", 0.0))
+            if f1 < f1_threshold:
+                continue
+
+            scored_items.append(
+                {
+                    "thinking": thinking,
+                    "pred_amr": pred_amr,
+                    "f1": f1,
+                    "precision": float(scores.get("Precision", 0.0)),
+                    "recall": float(scores.get("Recall", 0.0)),
+                }
+            )
+
+    return (idx, sentence, gold_amr, len(responses) if responses else 0, scored_items)
 
 
 # ---------------------------------------------------------------------------
@@ -194,13 +263,13 @@ def _model_to_json_line(model: DiverseReasoningResult) -> str:
 
 def load_completed_results(
     output_path: Path,
-) -> Dict[str, DiverseReasoningResult]:
+) -> Dict[Any, DiverseReasoningResult]:
     """
     Load already-processed results from the output JSONL file.
 
-    Returns a dict mapping sentence → DiverseReasoningResult.
+    Returns a dict mapping ID (int) or sentence (str) → DiverseReasoningResult.
     """
-    results: Dict[str, DiverseReasoningResult] = {}
+    results: Dict[Any, DiverseReasoningResult] = {}
     if not output_path.exists():
         return results
     with output_path.open("r", encoding="utf-8") as f:
@@ -211,18 +280,21 @@ def load_completed_results(
             try:
                 data = json.loads(line)
                 result = DiverseReasoningResult(**data)
-                results[result.sentence] = result
+                if result.id is not None:
+                    results[result.id] = result
+                else:
+                    results[result.sentence] = result
             except (json.JSONDecodeError, Exception):
                 continue
     return results
 
 
-def load_raw_samples(raw_path: Path) -> Dict[str, List[str]]:
+def load_raw_samples(raw_path: Path) -> Dict[Any, List[str]]:
     """
     Load raw responses from the intermediate raw samples file.
-    Returns a dict mapping sentence -> list of raw response strings.
+    Returns a dict mapping ID (int) or sentence (str) -> list of raw response strings.
     """
-    raw_samples: Dict[str, List[str]] = {}
+    raw_samples: Dict[Any, List[str]] = {}
     if not raw_path.exists():
         return raw_samples
     with raw_path.open("r", encoding="utf-8") as f:
@@ -232,13 +304,16 @@ def load_raw_samples(raw_path: Path) -> Dict[str, List[str]]:
                 continue
             try:
                 data = json.loads(line)
-                raw_samples[data["sentence"]] = data["responses"]
+                if "index" in data:
+                    raw_samples[data["index"]] = data["responses"]
+                else:
+                    raw_samples[data["sentence"]] = data["responses"]
             except Exception:
                 continue
     return raw_samples
 
 
-def save_raw_sample(raw_path: Path, sentence: str, gold_amr: str, responses: List[str]):
+def save_raw_sample(raw_path: Path, index: int, sentence: str, gold_amr: str, responses: List[str]):
     """
     Append a raw generated sample to the intermediate file.
     """
@@ -246,7 +321,12 @@ def save_raw_sample(raw_path: Path, sentence: str, gold_amr: str, responses: Lis
     with raw_path.open("a", encoding="utf-8") as f:
         f.write(
             json.dumps(
-                {"sentence": sentence, "gold_amr": gold_amr, "responses": responses},
+                {
+                    "index": index,
+                    "sentence": sentence,
+                    "gold_amr": gold_amr,
+                    "responses": responses,
+                },
                 ensure_ascii=False,
             )
             + "\n"
@@ -320,10 +400,15 @@ def run_diverse_sampling_pipeline(
     # Load existing final results to check which sentences are already "complete"
     existing_results = load_completed_results(output_path)
     
-    def is_sentence_complete(sent: str) -> bool:
-        if sent not in existing_results:
+    def is_sample_complete(idx: int, sent: str) -> bool:
+        res = None
+        if idx in existing_results:
+            res = existing_results[idx]
+        elif sent in existing_results:
+            res = existing_results[sent]
+
+        if res is None:
             return False
-        res = existing_results[sent]
         if not res.is_complete:
             return False
         # A sentence is complete if it has at least top_k selected samples, all with f1 >= threshold
@@ -359,9 +444,10 @@ def run_diverse_sampling_pipeline(
         
         sentences_to_generate = []
         samples_to_generate = []
+        indices_to_generate = []
         
         inspected_count = 0
-        for sample in dataset:
+        for idx, sample in enumerate(dataset):
             if max_samples is not None and inspected_count >= max_samples:
                 break
             inspected_count += 1
@@ -372,16 +458,23 @@ def run_diverse_sampling_pipeline(
                 continue
                 
             # Skip if complete in final output
-            if skip_complete and is_sentence_complete(sent):
+            is_comp = is_sample_complete(idx, sent)
+            if skip_complete and is_comp:
                 stats["skipped"] += 1
                 continue
                 
             # Skip if already generated (with enough responses)
-            if sent in raw_samples_dict and len(raw_samples_dict[sent]) >= n_samples:
-                continue
+            # But if skip_complete is True and the sample is NOT complete, we WANT to resample it,
+            # so we only skip if we are not resampling.
+            if not (skip_complete and not is_comp):
+                if idx in raw_samples_dict and len(raw_samples_dict[idx]) >= n_samples:
+                    continue
+                elif sent in raw_samples_dict and len(raw_samples_dict[sent]) >= n_samples:
+                    continue
                 
             sentences_to_generate.append(sent)
             samples_to_generate.append(sample)
+            indices_to_generate.append(idx)
 
         print(f"Total dataset records: {len(dataset)}")
         print(f"Need generation: {len(sentences_to_generate)}")
@@ -396,6 +489,7 @@ def run_diverse_sampling_pipeline(
             # Process in batches
             for i in range(0, len(sentences_to_generate), batch_size):
                 batch_samples = samples_to_generate[i : i + batch_size]
+                batch_indices = indices_to_generate[i : i + batch_size]
                 prompts = []
                 for s in batch_samples:
                     user_prompt = USER_PROMPT.format(sentence=s[sentence_field])
@@ -408,10 +502,10 @@ def run_diverse_sampling_pipeline(
                     stats["failed"] += len(batch_samples)
                     continue
 
-                for sample, responses in zip(batch_samples, batch_responses):
+                for sample, index, responses in zip(batch_samples, batch_indices, batch_responses):
                     sent = sample[sentence_field]
                     gold_amr = sample[amr_field].strip()
-                    save_raw_sample(raw_path, sent, gold_amr, responses)
+                    save_raw_sample(raw_path, index, sent, gold_amr, responses)
                     stats["processed"] += 1
 
             # Shutdown vLLM generation engine to free GPU memory
@@ -441,7 +535,7 @@ def run_diverse_sampling_pipeline(
         # Filter out records that are already complete in final output (if skip_complete is True)
         records_to_process = []
         inspected_count = 0
-        for sample in dataset:
+        for idx, sample in enumerate(dataset):
             if max_samples is not None and inspected_count >= max_samples:
                 break
             inspected_count += 1
@@ -449,10 +543,10 @@ def run_diverse_sampling_pipeline(
             sent = sample.get(sentence_field)
             if not isinstance(sent, str):
                 continue
-            if skip_complete and is_sentence_complete(sent):
+            if skip_complete and is_sample_complete(idx, sent):
                 continue
-            if sent in raw_samples_dict:
-                records_to_process.append(sample)
+            if idx in raw_samples_dict or sent in raw_samples_dict:
+                records_to_process.append((idx, sample))
 
         print(f"Need processing in Stage 2: {len(records_to_process)}")
         if not records_to_process:
@@ -461,13 +555,10 @@ def run_diverse_sampling_pipeline(
 
         # Load embedding model configurations
         embedding_config = config.get("embedding_config", {})
-        embed_model_name = embedding_config.get("model", "all-MiniLM-L6-v2")
+        embed_model_name = embedding_config.get("model", "google/embeddinggemma-300m")
         diversity_weight = float(embedding_config.get("diversity_weight", 0.5))
         use_vllm_embed = bool(embedding_config.get("use_vllm", True))
-        gpu_mem_util = float(embedding_config.get("gpu_memory_utilization", 0.1))
-
-        if use_vllm_embed and embed_model_name == "all-MiniLM-L6-v2":
-            embed_model_name = "sentence-transformers/all-MiniLM-L6-v2"
+        gpu_mem_util = float(embedding_config.get("gpu_memory_utilization", 0.9))
 
         print(f"Loading embedding model: {embed_model_name} (use_vllm={use_vllm_embed})")
         if use_vllm_embed:
@@ -477,70 +568,76 @@ def run_diverse_sampling_pipeline(
                 runner="pooling",
                 gpu_memory_utilization=gpu_mem_util,
                 enforce_eager=True,
-                tensor_parallel_size=1
+                tensor_parallel_size=1,
+                hf_token=os.getenv("HF_TOKEN"),
             )
         else:
             embed_model = SentenceTransformer(embed_model_name)
 
-        scorer = Smatchpp()
-
-        # Step A: Parse and score F1 for all responses of all records to process
-        print("Scoring generated samples with smatchpp...")
+        # Step A: Parse and score F1 for all responses using parallel workers
+        num_workers = min(os.cpu_count() or 4, len(records_to_process))
+        print(f"Scoring generated samples with smatchpp ({num_workers} parallel workers)...")
         valid_samples_by_sentence = {}
         all_thinking_texts = []
         thinking_mapping = []
 
-        for record in records_to_process:
+        # Build work items: (index, sentence, gold_amr, responses, f1_threshold)
+        work_items = []
+        for idx, record in records_to_process:
             sent = record[sentence_field]
             gold_amr = record[amr_field].strip()
-            responses = raw_samples_dict[sent]
+            responses = raw_samples_dict.get(idx) or raw_samples_dict.get(sent)
+            work_items.append((idx, sent, gold_amr, responses, f1_threshold))
 
-            scored_samples = []
-            for resp in responses:
-                if not resp or not resp.strip():
-                    continue
-                thinking = extract_thinking(resp)
-                pred_amr = extract_amr(resp)
-                if not pred_amr:
-                    continue
+        # Score in parallel with progress bar
+        with ProcessPoolExecutor(
+            max_workers=num_workers, initializer=_init_worker_scorer
+        ) as executor:
+            results_iter = executor.map(
+                _score_record_worker, work_items,
+                chunksize=max(1, len(work_items) // (num_workers * 4)),
+            )
+            for result in tqdm(
+                results_iter,
+                total=len(work_items),
+                desc="  Scoring (smatch)",
+                unit="rec",
+                dynamic_ncols=True,
+            ):
+                idx, sent, gold_amr, total_responses, scored_items = result
 
-                scores = score_amr_pair(gold_amr, pred_amr, scorer)
-                f1 = float(scores.get("F1", 0.0))
-
-                if f1 < f1_threshold:
-                    continue
-
-                scored_samples.append(
-                    ReasoningSample(
-                        thinking=thinking,
-                        pred_amr=pred_amr,
-                        f1=f1,
-                        precision=float(scores.get("Precision", 0.0)),
-                        recall=float(scores.get("Recall", 0.0)),
+                if not scored_items:
+                    all_results[idx] = DiverseReasoningResult(
+                        id=idx,
+                        sentence=sent,
+                        gold_amr=gold_amr,
+                        selected_samples=[],
+                        total_generated=total_responses,
+                        best_f1=0.0,
+                        is_complete=False,
                     )
-                )
+                    continue
 
-            if not scored_samples:
-                # Still record empty selected
-                all_results[sent] = DiverseReasoningResult(
-                    sentence=sent,
-                    gold_amr=gold_amr,
-                    selected_samples=[],
-                    total_generated=len(responses),
-                    best_f1=0.0,
-                    is_complete=False,
-                )
-                continue
+                scored_samples = [
+                    ReasoningSample(
+                        thinking=item["thinking"],
+                        pred_amr=item["pred_amr"],
+                        f1=item["f1"],
+                        precision=item["precision"],
+                        recall=item["recall"],
+                    )
+                    for item in scored_items
+                ]
 
-            valid_samples_by_sentence[sent] = scored_samples
-            for idx, s in enumerate(scored_samples):
-                text = s.thinking if s.thinking else s.pred_amr
-                # Truncate text to avoid exceeding vllm model context limit (e.g. 256 tokens)
-                words = text.split()
-                if len(words) > 100:
-                    text = " ".join(words[:100])
-                all_thinking_texts.append(text)
-                thinking_mapping.append((sent, idx))
+                valid_samples_by_sentence[idx] = scored_samples
+                for sample_idx, s in enumerate(scored_samples):
+                    text = s.thinking if s.thinking else s.pred_amr
+                    # Truncate text to avoid exceeding vllm model context limit (e.g. 256 tokens)
+                    words = text.split()
+                    if len(words) > 100:
+                        text = " ".join(words[:100])
+                    all_thinking_texts.append(text)
+                    thinking_mapping.append((idx, sample_idx))
 
         # Step B: Batch generate embeddings for all thinking processes
         if all_thinking_texts:
@@ -552,42 +649,51 @@ def run_diverse_sampling_pipeline(
                 embeddings = embed_model.encode(all_thinking_texts, convert_to_numpy=True)
 
             # Map embeddings back to scored samples
-            embeddings_by_sentence = {sent: [] for sent in valid_samples_by_sentence}
-            for emb, (sent, idx) in zip(embeddings, thinking_mapping):
-                embeddings_by_sentence[sent].append(emb)
+            embeddings_by_sentence = {idx: [] for idx in valid_samples_by_sentence}
+            for emb, (idx, sample_idx) in zip(embeddings, thinking_mapping):
+                embeddings_by_sentence[idx].append(emb)
         else:
             embeddings_by_sentence = {}
 
         # Step C: Select top-k diverse reasoning paths for each sentence via MMR
         print("Selecting diverse reasoning paths via MMR...")
-        for sent, scored_samples in valid_samples_by_sentence.items():
-            sent_embeddings = np.array(embeddings_by_sentence[sent])
+        for idx, scored_samples in valid_samples_by_sentence.items():
+            sent_embeddings = np.array(embeddings_by_sentence[idx])
             selected = select_diverse_mmr(
                 scored_samples, sent_embeddings, top_k=top_k, diversity_weight=diversity_weight
             )
 
-            # Find matching record in records_to_process to get gold_amr
-            matching_record = next(r for r in records_to_process if r[sentence_field] == sent)
-            gold_amr = matching_record[amr_field].strip()
+            # Find matching record in records_to_process to get gold_amr and sentence
+            matching_record = next(r for r in records_to_process if r[0] == idx)
+            gold_amr = matching_record[1][amr_field].strip()
+            sent = matching_record[1][sentence_field]
 
             best_f1 = max(s.f1 for s in scored_samples)
             is_complete = len(selected) >= top_k
+            
+            # Find total_generated
+            total_generated = len(raw_samples_dict.get(idx) or raw_samples_dict.get(sent) or [])
 
-            all_results[sent] = DiverseReasoningResult(
+            all_results[idx] = DiverseReasoningResult(
+                id=idx,
                 sentence=sent,
                 gold_amr=gold_amr,
                 selected_samples=selected,
-                total_generated=len(raw_samples_dict[sent]),
+                total_generated=total_generated,
                 best_f1=best_f1,
                 is_complete=is_complete,
             )
             stats["success"] += 1
 
-        # Save final output
+        # Save final output in correct dataset order
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with output_path.open("w", encoding="utf-8") as writer:
-            for result in all_results.values():
-                writer.write(_model_to_json_line(result) + "\n")
+            for idx, sample in enumerate(dataset):
+                sent = sample.get(sentence_field)
+                if idx in all_results:
+                    writer.write(_model_to_json_line(all_results[idx]) + "\n")
+                elif sent in all_results:
+                    writer.write(_model_to_json_line(all_results[sent]) + "\n")
 
         # Cleanup embedding model memory
         if use_vllm_embed:
@@ -602,7 +708,10 @@ def run_diverse_sampling_pipeline(
             torch.cuda.empty_cache()
 
     # --- Summary ---
-    total_complete = sum(1 for r in all_results.values() if is_sentence_complete(r.sentence))
+    total_complete = sum(
+        1 for r in all_results.values()
+        if r.is_complete and len([s for s in r.selected_samples if s.f1 >= f1_threshold]) >= top_k
+    )
     total_results = len(all_results)
     avg_f1 = (
         sum(r.best_f1 for r in all_results.values()) / total_results

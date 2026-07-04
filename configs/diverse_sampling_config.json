@@ -29,10 +29,10 @@
     "skip_complete": true
   },
   "embedding_config": {
-    "model": "all-MiniLM-L6-v2",
+    "model": "google/embeddinggemma-300m",
     "diversity_weight": 0.5,
     "use_vllm": true,
-    "gpu_memory_utilization": 0.1
+    "gpu_memory_utilization": 0.9
   },
   "env": {
     "CUDA_VISIBLE_DEVICES": "0"
