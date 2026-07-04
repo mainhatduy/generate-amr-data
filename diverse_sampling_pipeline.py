@@ -388,7 +388,8 @@ def run_diverse_sampling_pipeline(
     else:
         f1_threshold = float(pipeline_config.get("f1_threshold", 85.0))
         
-    batch_size = int(pipeline_config.get("batch_size", 64))
+    batch_size_val = pipeline_config.get("batch_size", 64)
+    batch_size = int(batch_size_val) if batch_size_val is not None else None
     skip_complete = bool(pipeline_config.get("skip_complete", True))
 
     # --- Paths ---
@@ -487,9 +488,12 @@ def run_diverse_sampling_pipeline(
             engine = VLLMEngine(config=engine_config, cuda_device=cuda_device)
 
             # Process in batches
-            for i in range(0, len(sentences_to_generate), batch_size):
-                batch_samples = samples_to_generate[i : i + batch_size]
-                batch_indices = indices_to_generate[i : i + batch_size]
+            actual_batch_size = batch_size if batch_size is not None else len(sentences_to_generate)
+            if actual_batch_size <= 0:
+                actual_batch_size = 1
+            for i in range(0, len(sentences_to_generate), actual_batch_size):
+                batch_samples = samples_to_generate[i : i + actual_batch_size]
+                batch_indices = indices_to_generate[i : i + actual_batch_size]
                 prompts = []
                 for s in batch_samples:
                     user_prompt = USER_PROMPT.format(sentence=s[sentence_field])
