@@ -74,31 +74,46 @@ def flat_amr(amr_text: str) -> str:
     return penman.encode(graph, indent=0, compact=True).replace("\n", " ")
 
 
+import sys
+import re
+sys.path.append(os.path.abspath(".."))
+from services.amr_hint.prompt_builder import build_prompt
+
+def clean_model_respose(response):
+    response = re.sub(r"<amr>.*?</amr>", "", response, flags=re.DOTALL)
+    response = response.replace("<think>", "").replace("</think>", "")
+    return response.strip()
+
 def generate_conversation(examples):
     inputs = examples["sentence"]
-    reasonings = examples["reasoning"]
     outputs = examples["amr"]
-    system_prompts = examples["system_prompt"]
-    enable_thinking = config["inference"]["enable_thinking"]
+    meanings = examples["meaning"]
+    model_resposes = examples["model_respose"]
 
     conversations = []
-    for input_text, reasoning, output, system_prompt in zip(inputs, reasonings, outputs, system_prompts):
-        output = remove_wiki(output)
-        output = flat_amr(output)
+    for input_text, output, meaning, model_respose_list in zip(inputs, outputs, meanings, model_resposes):
+        system_prompt = build_prompt(input_text, output)
+        cleaned_output = remove_wiki(output)
+        cleaned_output = flat_amr(cleaned_output)
+        
+        if isinstance(model_respose_list, list) and len(model_respose_list) > 0:
+            candidates = model_respose_list
+        else:
+            candidates = [str(model_respose_list)]
+            
         user_msg = (
             "Convert the following English sentence into its Abstract Meaning"
             f" Representation (AMR):\n\n<sentence>{input_text}</sentence>"
         )
-        if enable_thinking:
-            assistant_msg = f"<think>\n{reasoning}\n</think>\n\n<amr>\n{output}\n</amr>"
-        else:
-            assistant_msg = f"<think>\n\n</think>\n\n<amr>\n{output}\n</amr>"
+        for raw_reasoning in candidates:
+            reasoning = clean_model_respose(raw_reasoning)
+            assistant_msg = f"<think>{meaning.strip()} {reasoning.strip()}</think>\n\n<amr>{cleaned_output}</amr>"
 
-        conversations.append([
-            {"role": "system",    "content": system_prompt},
-            {"role": "user",      "content": user_msg},
-            {"role": "assistant", "content": assistant_msg},
-        ])
+            conversations.append([
+                {"role": "system",    "content": system_prompt},
+                {"role": "user",      "content": user_msg},
+                {"role": "assistant", "content": assistant_msg},
+            ])
 
     return {"conversations": conversations}
 
@@ -124,7 +139,7 @@ def count_tokens(examples):
 # Load & prepare dataset
 # ---------------------------------------------------------------------------
 
-dataset = load_dataset("json", data_files=config["dataset"]["train_file"]).shuffle(seed=42)
+dataset = load_dataset("myduy/raw-amr-reasoning-meaning", token=os.getenv("HF_TOKEN")).shuffle(seed=42)
 print(dataset)
 
 # Test AMR helpers on one sample
@@ -143,7 +158,7 @@ def filter_duplicates(example):
     return True
 
 dataset = dataset.filter(filter_duplicates)
-dataset = dataset.map(generate_conversation, batched=True)
+dataset = dataset.map(generate_conversation, batched=True, remove_columns=dataset["train"].column_names)
 dataset = dataset.map(formatting_prompts_func, batched=True)
 
 # Preview a formatted example
