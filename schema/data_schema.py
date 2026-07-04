@@ -18,7 +18,6 @@ class ReasoningSample(BaseModel):
     """A single scored sample with its thinking process."""
     thinking: str
     pred_amr: str
-    full_response: str
     f1: float
     precision: float
     recall: float
