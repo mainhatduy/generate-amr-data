@@ -144,3 +144,16 @@ uv run python diverse_sampling_pipeline.py \
   --f1-threshold 85.0 \
   --max-samples 100
 ```
+
+---
+
+## Running Fine-Tuning Scripts
+
+When running training scripts (like `sft_qwen3_from_top3_data.py`), you must explicitly tell `uv` to use the `train` dependency group. Otherwise, `uv run` will synchronize using the default environment and may accidentally override or uninstall dependencies like `torch` and `torchvision` that are strictly required by Unsloth.
+
+Run your scripts by specifying the group:
+
+```bash
+uv run --group train notebooks/sft_qwen3_from_top3_data.py
+```
+
