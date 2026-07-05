@@ -4,38 +4,52 @@ A pipeline to generate synthetic Abstract Meaning Representation (AMR) data usin
 
 ## Setup Environment
 
-This project uses `uv` for Python package management. Follow the steps below to set up the virtual environment with Python 3.13.
+This project uses `uv` for Python package management.
 
-### 1. Initialize and Sync Virtual Environment
+### Dependency Groups
 
-Pin Python 3.13 and install all dependencies:
+`unsloth` (fine-tuning) and `vllm` (inference) have **irreconcilable `transformers` version constraints** — they cannot coexist in the same environment:
+
+| Constraint | `unsloth` / `unsloth-zoo` | `vllm >= 0.21` |
+|---|---|---|
+| `transformers` | `<=5.5.0` | `!=5.5.0` (needs `>=5.5.1`) |
+
+To handle this, they are split into separate optional dependency groups:
+
+| Group | Contents | Use case |
+|-------|----------|----------|
+| `train` | `unsloth`, `unsloth-zoo` | Fine-tuning jobs |
+| `inference` | `vllm` | Inference / data generation |
+| *(base)* | `matplotlib`, `penman`, `sentence-transformers`, etc. | Always installed |
+
+### 1. Install for Inference (vLLM)
 
 ```bash
-# Pin Python 3.13
-uv python pin 3.13
-
-# Create and synchronize the virtual environment
-uv sync
+uv sync --group inference --link-mode copy
 ```
 
-Alternatively, you can initialize the sync specifying the Python version:
+### 2. Install for Fine-tuning (Unsloth)
+
 ```bash
-uv sync --python 3.13
+uv sync --group train --link-mode copy
 ```
 
-### 2. Activate the Virtual Environment
-
-Activate the newly created `.venv`:
+### 3. Activate the Virtual Environment
 
 ```bash
 source .venv/bin/activate
 ```
 
+> [!IMPORTANT]
+> If you encounter shared library compilation errors like `libcusparseLt.so.0: cannot open shared object file` or `libnvshmem_host.so.3: cannot open shared object file` when importing `torch` or `unsloth`, it means some cached `nvidia-*` packages were not linked correctly. Running with `--link-mode copy` (as shown above) fixes this by copying the dependencies cleanly instead of symlinking them.
+
+> [!WARNING]
+> Do **not** run `uv sync --group train --group inference` simultaneously — this will trigger the `transformers` version conflict. Install only the group you need for the current job.
+
 > [!TIP]
-> If you are using vLLM and need `flash-attn` for accelerated performance, you can build and install it using:
+> If you need `flash-attn` for accelerated performance (e.g., for Unsloth or vLLM), do **not** compile it from source to avoid CUDA version mismatches with the system compiler. Instead, install the prebuilt wheel matching Python 3.13 and PyTorch 2.10.0:
 > ```bash
-> uv pip install ninja packaging
-> MAX_JOBS=8 uv pip install flash-attn --no-build-isolation
+> uv pip install "https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.1/flash_attn-2.8.1+cu12torch2.10cxx11abiTRUE-cp313-cp313-linux_x86_64.whl"
 > ```
 
 ---

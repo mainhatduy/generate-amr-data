@@ -3,15 +3,32 @@ name = "generate-amr-data"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 dependencies = [
-    "datasets>=3.6.0",
+    "ipykernel>=7.3.0",
     "matplotlib>=3.11.0",
-    "openai>=2.44.0",
     "penman>=1.3.1",
+    "python-dotenv>=1.2.2",
     "sentence-transformers>=3.0.0",
     "smatchpp>=1.8.0",
-    "unsloth>=2025.9.5",
-    "vllm>=0.24.0",
     "wandb>=0.28.0",
+]
+
+[dependency-groups]
+train = [
+    "unsloth==2026.6.9",
+    "unsloth-zoo==2026.6.7",
+]
+inference = [
+    "vllm==0.24.0",
+]
+
+[tool.uv]
+# Resolve each dependency group independently to avoid cross-group conflicts
+# (unsloth caps transformers<=5.5.0, vllm>=0.21 requires transformers!=5.5.0)
+conflicts = [
+    [
+        { group = "train" },
+        { group = "inference" },
+    ],
 ]
