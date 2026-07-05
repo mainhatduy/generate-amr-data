@@ -197,11 +197,11 @@ class AMRHint:
                 var_to_type[source] = target
                 # Check if it looks like a frame (has -number suffix)
                 # Regex for frame: ends with dash followed by digits
-                if re.match(r'.+-\d+$', target):
+                if target and re.match(r'.+-\d+$', target):
                     frames_info[source] = {"frame": target, "args": []}
                 else:
                     # Only add concept if it exists in concept_groups.json
-                    if target in self.concept_finder.concept_mapping:
+                    if target and target in self.concept_finder.concept_mapping:
                         concepts_found.add(target)
         
         # 2. Second pass: Identify arguments used for the frames

@@ -86,28 +86,23 @@ def clean_model_respose(response):
 
 def generate_conversation(examples):
     inputs = examples["sentence"]
-    outputs = examples["amr"]
-    meanings = examples["meaning"]
-    model_resposes = examples["model_respose"]
+    outputs = examples["gold_amr"]
+    selected_samples_list = examples["selected_samples"]
 
     conversations = []
-    for input_text, output, meaning, model_respose_list in zip(inputs, outputs, meanings, model_resposes):
+    for input_text, output, selected_samples in zip(inputs, outputs, selected_samples_list):
         system_prompt = build_prompt(input_text, output)
         cleaned_output = remove_wiki(output)
         cleaned_output = flat_amr(cleaned_output)
         
-        if isinstance(model_respose_list, list) and len(model_respose_list) > 0:
-            candidates = model_respose_list
-        else:
-            candidates = [str(model_respose_list)]
-            
         user_msg = (
             "Convert the following English sentence into its Abstract Meaning"
             f" Representation (AMR):\n\n<sentence>{input_text}</sentence>"
         )
-        for raw_reasoning in candidates:
+        for sample in selected_samples:
+            raw_reasoning = sample["thinking"]
             reasoning = clean_model_respose(raw_reasoning)
-            assistant_msg = f"<think>{meaning.strip()} {reasoning.strip()}</think>\n\n<amr>{cleaned_output}</amr>"
+            assistant_msg = f"<think>{reasoning.strip()}</think>\n\n<amr>{cleaned_output}</amr>"
 
             conversations.append([
                 {"role": "system",    "content": system_prompt},
@@ -139,11 +134,11 @@ def count_tokens(examples):
 # Load & prepare dataset
 # ---------------------------------------------------------------------------
 
-dataset = load_dataset("myduy/raw-amr-reasoning-meaning", token=os.getenv("HF_TOKEN")).shuffle(seed=42)
+dataset = load_dataset("json", data_files="../data/top3_reasoning_results.jsonl").shuffle(seed=42)
 print(dataset)
 
 # Test AMR helpers on one sample
-sample = dataset["train"][1]["amr"]
+sample = dataset["train"][1]["gold_amr"]
 print("Original:\n", sample)
 print("Removed wiki:\n", remove_wiki(sample))
 print("Flattened:\n", flat_amr(sample))
