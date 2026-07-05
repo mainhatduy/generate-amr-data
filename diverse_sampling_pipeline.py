@@ -304,10 +304,17 @@ def load_raw_samples(raw_path: Path) -> Dict[Any, List[str]]:
                 continue
             try:
                 data = json.loads(line)
-                if "index" in data:
-                    raw_samples[data["index"]] = data["responses"]
+                key = data["index"] if "index" in data else data["sentence"]
+                responses = data.get("responses", [])
+                if key in raw_samples:
+                    # Append new responses, avoiding duplicates
+                    seen = set(raw_samples[key])
+                    for r in responses:
+                        if r not in seen:
+                            raw_samples[key].append(r)
+                            seen.add(r)
                 else:
-                    raw_samples[data["sentence"]] = data["responses"]
+                    raw_samples[key] = list(responses)
             except Exception:
                 continue
     return raw_samples
@@ -548,35 +555,18 @@ def run_diverse_sampling_pipeline(
             if not isinstance(sent, str):
                 continue
             if skip_complete and is_sample_complete(idx, sent):
+                if stage == "2":
+                    stats["skipped"] += 1
                 continue
             if idx in raw_samples_dict or sent in raw_samples_dict:
                 records_to_process.append((idx, sample))
+                if stage == "2":
+                    stats["processed"] += 1
 
         print(f"Need processing in Stage 2: {len(records_to_process)}")
         if not records_to_process:
             print("No records need processing in Stage 2.")
             return stats
-
-        # Load embedding model configurations
-        embedding_config = config.get("embedding_config", {})
-        embed_model_name = embedding_config.get("model", "google/embeddinggemma-300m")
-        diversity_weight = float(embedding_config.get("diversity_weight", 0.5))
-        use_vllm_embed = bool(embedding_config.get("use_vllm", True))
-        gpu_mem_util = float(embedding_config.get("gpu_memory_utilization", 0.9))
-
-        print(f"Loading embedding model: {embed_model_name} (use_vllm={use_vllm_embed})")
-        if use_vllm_embed:
-            from vllm import LLM
-            embed_model = LLM(
-                model=embed_model_name,
-                runner="pooling",
-                gpu_memory_utilization=gpu_mem_util,
-                enforce_eager=True,
-                tensor_parallel_size=1,
-                hf_token=os.getenv("HF_TOKEN"),
-            )
-        else:
-            embed_model = SentenceTransformer(embed_model_name)
 
         # Step A: Parse and score F1 for all responses using parallel workers
         num_workers = min(os.cpu_count() or 4, len(records_to_process))
@@ -644,7 +634,28 @@ def run_diverse_sampling_pipeline(
                     thinking_mapping.append((idx, sample_idx))
 
         # Step B: Batch generate embeddings for all thinking processes
+        embedding_config = config.get("embedding_config", {})
+        diversity_weight = float(embedding_config.get("diversity_weight", 0.5))
+        use_vllm_embed = bool(embedding_config.get("use_vllm", True))
+
         if all_thinking_texts:
+            embed_model_name = embedding_config.get("model", "google/embeddinggemma-300m")
+            gpu_mem_util = float(embedding_config.get("gpu_memory_utilization", 0.9))
+
+            print(f"Loading embedding model: {embed_model_name} (use_vllm={use_vllm_embed})")
+            if use_vllm_embed:
+                from vllm import LLM
+                embed_model = LLM(
+                    model=embed_model_name,
+                    runner="pooling",
+                    gpu_memory_utilization=gpu_mem_util,
+                    enforce_eager=True,
+                    tensor_parallel_size=1,
+                    hf_token=os.getenv("HF_TOKEN"),
+                )
+            else:
+                embed_model = SentenceTransformer(embed_model_name)
+
             print(f"Generating embeddings for {len(all_thinking_texts)} thinking processes in a single batch...")
             if use_vllm_embed:
                 outputs = embed_model.embed(all_thinking_texts)
@@ -700,7 +711,7 @@ def run_diverse_sampling_pipeline(
                     writer.write(_model_to_json_line(all_results[sent]) + "\n")
 
         # Cleanup embedding model memory
-        if use_vllm_embed:
+        if all_thinking_texts and use_vllm_embed:
             print("Shutting down vLLM embedding engine...")
             try:
                 from vllm.distributed.parallel_state import destroy_model_parallel
