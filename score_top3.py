@@ -1,13 +1,14 @@
 import argparse
 import json
 import os
-import re
 import logging
 import warnings
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 from tqdm import tqdm
+
+from utils.amr_utils import extract_amr, extract_thinking, fix_amr_parentheses
 
 # Suppress warnings and logger logs from Penman and Smatchpp in the main process
 warnings.filterwarnings("ignore")
@@ -16,33 +17,6 @@ logging.getLogger().setLevel(logging.ERROR)
 logging.getLogger("smatchpp").setLevel(logging.ERROR)
 logging.getLogger("penman").setLevel(logging.ERROR)
 
-# ---------------------------------------------------------------------------
-# Extraction helpers
-# ---------------------------------------------------------------------------
-
-def extract_thinking(response: str) -> str:
-    """Extract thinking process before </think> tag."""
-    if "</think>" in response:
-        thinking = response.split("</think>", 1)[0]
-        thinking = thinking.replace("<think>", "")
-        return thinking.strip()
-    
-    if "<think>" in response:
-        thinking = response.split("<think>", 1)[1]
-        return thinking.strip()
-        
-    thinking = re.sub(r"<amr>.*?</amr>", "", response, flags=re.DOTALL)
-    return thinking.strip()
-
-
-def extract_amr(response: str) -> str | None:
-    """Extract content between <amr>...</amr> tags."""
-    match = re.search(r"<amr>(.*?)</amr>", response, re.DOTALL)
-    if match:
-        return match.group(1).strip()
-    if "<amr>" in response:
-        return response.split("<amr>", 1)[1].strip()
-    return None
 
 # ---------------------------------------------------------------------------
 # Parallel Worker
@@ -78,6 +52,7 @@ def _score_record_worker(args: Tuple[int, str, str, List[str], float]) -> Dict[s
             pred_amr = extract_amr(resp)
             if not pred_amr:
                 continue
+            pred_amr = fix_amr_parentheses(pred_amr)
 
             try:
                 result = _worker_scorer.score_pair(gold_amr, pred_amr)

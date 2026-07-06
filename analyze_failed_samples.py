@@ -21,56 +21,19 @@ import argparse
 import json
 import logging
 import os
-import re
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from tqdm import tqdm
 
+from utils.amr_utils import extract_amr, fix_amr_parentheses
+
 # ---------------------------------------------------------------------------
 # Suppress noisy logs
 # ---------------------------------------------------------------------------
 logging.getLogger("smatchpp").setLevel(logging.ERROR)
 logging.getLogger("penman").setLevel(logging.ERROR)
-
-
-# ---------------------------------------------------------------------------
-# Extraction helpers
-# ---------------------------------------------------------------------------
-
-
-def extract_amr(response: str) -> str | None:
-    """Extract content between <amr>...</amr> tags."""
-    match = re.search(r"<amr>(.*?)</amr>", response, re.DOTALL)
-    if match:
-        return match.group(1).strip()
-    if "<amr>" in response:
-        return response.split("<amr>", 1)[1].strip()
-    return None
-
-
-def fix_amr_parentheses(amr_str: str) -> str:
-    """
-    Balances parentheses in an AMR string.
-    Appends missing closing parentheses or removes extra ones from the end.
-    """
-    if not amr_str:
-        return amr_str
-
-    open_count = amr_str.count('(')
-    close_count = amr_str.count(')')
-
-    if open_count > close_count:
-        amr_str += ')' * (open_count - close_count)
-    elif close_count > open_count:
-        diff = close_count - open_count
-        for _ in range(diff):
-            idx = amr_str.rfind(')')
-            if idx != -1:
-                amr_str = amr_str[:idx] + amr_str[idx + 1:]
-
-    return amr_str
 
 
 # ---------------------------------------------------------------------------
