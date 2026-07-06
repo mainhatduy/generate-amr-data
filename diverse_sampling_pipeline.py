@@ -86,6 +86,29 @@ def extract_amr(response: str) -> str | None:
     return None
 
 
+def fix_amr_parentheses(amr_str: str) -> str:
+    """
+    Balances parentheses in an AMR string.
+    Appends missing closing parentheses or removes extra ones from the end.
+    """
+    if not amr_str:
+        return amr_str
+
+    open_count = amr_str.count('(')
+    close_count = amr_str.count(')')
+
+    if open_count > close_count:
+        amr_str += ')' * (open_count - close_count)
+    elif close_count > open_count:
+        diff = close_count - open_count
+        for _ in range(diff):
+            idx = amr_str.rfind(')')
+            if idx != -1:
+                amr_str = amr_str[:idx] + amr_str[idx + 1:]
+
+    return amr_str
+
+
 # ---------------------------------------------------------------------------
 # Scoring
 # ---------------------------------------------------------------------------
@@ -142,6 +165,7 @@ def _score_record_worker(
             pred_amr = extract_amr(resp)
             if not pred_amr:
                 continue
+            pred_amr = fix_amr_parentheses(pred_amr)
 
             try:
                 result = _worker_scorer.score_pair(gold_amr, pred_amr)  # type: ignore[union-attr]
